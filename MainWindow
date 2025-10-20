@@ -1,0 +1,145 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Linq;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+
+namespace AvaloniaApplication1;
+
+public partial class MainWindow : Window
+{
+    private TextBlock _revenueText = null!;
+    
+    public class Item
+    {
+        public string Name { get; set; } = "";
+        public decimal PricePerUnit { get; set; }
+        public override string ToString() => $"{Name}: {PricePerUnit} per unit";
+    }
+
+    public class BulkItem : Item
+    {
+        public string MeasurementUnit { get; set; } = "";
+    }
+
+    public class UnitItem : Item
+    {
+        public decimal Weight { get; set; }
+    }
+
+    public class Inventory
+    {
+        public Dictionary<Item, decimal> Stock { get; } = new();
+
+        public void SetStock(Item item, decimal amount) => Stock[item] = Math.Max(0, amount);
+        public decimal GetStock(Item item) => Stock.TryGetValue(item, out var a) ? a : 0m;
+
+        public List<Item> LowStockItems()
+            => Stock.Where(kv => kv.Value < 5).Select(kv => kv.Key).ToList();
+    }
+
+    public class OrderLine
+    {
+        public Item Item { get; set; } = null!;
+        public decimal Quantity { get; set; }
+        public decimal LinePrice => Item.PricePerUnit * Quantity;
+        public string Unit => Item is BulkItem b ? b.MeasurementUnit : "count";
+        public override string ToString() => $"{Item.Name} x {Quantity} {Unit} = {LinePrice:0.00}";
+    }
+
+    public class Order
+    {
+        public string Time { get; set; } = "";
+        public List<OrderLine> OrderLines { get; } = new();
+        public decimal TotalPrice => OrderLines.Sum(ol => ol.LinePrice);
+
+        public string LinesSummary =>
+            string.Join(", ", OrderLines.Select(ol =>
+                $"{ol.Item.Name} x {ol.Quantity} {(ol.Item is BulkItem b ? b.MeasurementUnit : "count")}"));
+    }
+
+    public class OrderBook
+    {
+        public ObservableCollection<Order> QueuedOrders { get; } = new();
+        public ObservableCollection<Order> ProcessedOrders { get; } = new();
+        public decimal Revenue { get; private set; }
+
+        public void QueueOrder(Order o) => QueuedOrders.Add(o);
+
+        public void ProcessNextOrder(Inventory inv)
+        {
+            if (QueuedOrders.Count == 0) return;
+
+            var order = QueuedOrders[0];
+            QueuedOrders.RemoveAt(0);
+            ProcessedOrders.Add(order);
+            Revenue += order.TotalPrice;
+
+            foreach (var line in order.OrderLines)
+                inv.SetStock(line.Item, inv.GetStock(line.Item) - line.Quantity);
+        }
+    }
+
+    public class Customer
+    {
+        public string Name { get; set; } = "";
+        public List<Order> Orders { get; } = new();
+        public void CreateOrder(OrderBook book, Order order)
+        {
+            Orders.Add(order);
+            book.QueueOrder(order);
+        }
+    }
+    
+    private readonly Inventory _inventory = new();
+    private readonly OrderBook _orderBook = new();
+    
+    public ObservableCollection<Order> QueuedOrders    => _orderBook.QueuedOrders;
+    public ObservableCollection<Order> ProcessedOrders => _orderBook.ProcessedOrders;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        
+        _revenueText = this.FindControl<TextBlock>("RevenueText");
+        
+        var pen      = new UnitItem { Name = "Pen",      PricePerUnit = 10m, Weight = 0.02m };
+        var notebook = new UnitItem { Name = "Notebook", PricePerUnit = 25m, Weight = 0.30m };
+        var rice     = new BulkItem { Name = "Rice",     PricePerUnit = 30m, MeasurementUnit = "kg" };
+        var cable    = new BulkItem { Name = "Cable",    PricePerUnit = 15m, MeasurementUnit = "m"  };
+
+        _inventory.SetStock(pen, 20);
+        _inventory.SetStock(notebook, 10);
+        _inventory.SetStock(rice, 50);
+        _inventory.SetStock(cable, 100);
+        
+        var o1 = new Order { Time = "2025-10-20 10:00" };
+        o1.OrderLines.Add(new OrderLine { Item = pen,      Quantity = 3 });
+        o1.OrderLines.Add(new OrderLine { Item = notebook, Quantity = 2 });
+
+        var o2 = new Order { Time = "2025-10-20 10:10" };
+        o2.OrderLines.Add(new OrderLine { Item = rice,  Quantity = 1.5m });
+        o2.OrderLines.Add(new OrderLine { Item = cable, Quantity = 10m  });
+
+        var o3 = new Order { Time = "2025-10-20 10:20" };
+        o3.OrderLines.Add(new OrderLine { Item = notebook, Quantity = 1 });
+        o3.OrderLines.Add(new OrderLine { Item = rice,     Quantity = 2.25m });
+        
+        _orderBook.QueueOrder(o1);
+        _orderBook.QueueOrder(o2);
+        _orderBook.QueueOrder(o3);
+        
+        DataContext = this;
+        UpdateRevenueText();
+    }
+
+    private void UpdateRevenueText() =>
+        _revenueText.Text = _orderBook.Revenue.ToString("0.00");
+
+    public void ProcessNextOrder_OnClick(object? sender, RoutedEventArgs e)
+    {
+        _orderBook.ProcessNextOrder(_inventory);
+        UpdateRevenueText();
+    }
+}
